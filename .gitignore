@@ -1,0 +1,28 @@
+# Node / Frontend
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.env
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Log files
+*.log
+
+# Firebase/GCP credentials
+*firebase-adminsdk*.json
+*service-account*.json
+credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
