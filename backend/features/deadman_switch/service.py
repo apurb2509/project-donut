@@ -16,6 +16,7 @@ MONITOR_INTERVAL_SECONDS = int(os.getenv("DEADMAN_SWITCH_MONITOR_INTERVAL_SECOND
 _MONITOR_THREAD_STARTED = False
 _MONITOR_LOCK = threading.Lock()
 _TIMERS: Dict[str, threading.Timer] = {}
+_MONITOR_DISABLED = False
 
 
 def trigger_deadman_switch(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,12 +204,18 @@ def escalate_incident(incident_id: str) -> Optional[Dict[str, Any]]:
 
 def start_deadman_switch_monitor() -> None:
     global _MONITOR_THREAD_STARTED
+    global _MONITOR_DISABLED
 
-    if _MONITOR_THREAD_STARTED:
+    if _MONITOR_THREAD_STARTED or _MONITOR_DISABLED:
         return
 
     with _MONITOR_LOCK:
-        if _MONITOR_THREAD_STARTED:
+        if _MONITOR_THREAD_STARTED or _MONITOR_DISABLED:
+            return
+
+        if not _can_access_firestore():
+            _MONITOR_DISABLED = True
+            print("Dead-man switch monitor disabled: Firestore is unavailable. Configure Firebase credentials to enable it.")
             return
 
         monitor_thread = threading.Thread(target=_monitor_loop, daemon=True)
@@ -224,6 +231,16 @@ def _monitor_loop() -> None:
             print(f"Dead-man switch monitor error: {exc}")
         finally:
             threading.Event().wait(MONITOR_INTERVAL_SECONDS)
+
+
+def _can_access_firestore() -> bool:
+    try:
+        db = get_firestore_client()
+        # Trigger one lightweight call to validate auth/config at startup.
+        next(db.collections(), None)
+        return True
+    except Exception:
+        return False
 
 
 def _schedule_escalation(incident_id: str, alarm_window_seconds: int) -> None:
