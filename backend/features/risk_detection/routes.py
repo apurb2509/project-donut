@@ -2,6 +2,7 @@ import base64
 from flask import Blueprint, request, jsonify
 from .vision_service import analyze_image
 from .storage_service import handle_storage
+from features.deadman_switch.service import trigger_deadman_switch
 
 risk_bp = Blueprint('risk_detection', __name__)
 
@@ -36,11 +37,29 @@ def ingest_frame():
             camera_id=data['camera_id'], 
             location=data.get('location', 'Unknown')
         )
+
+        deadman_switch_result = None
+        if risk_level in {"YELLOW", "RED"}:
+            deadman_switch_result = trigger_deadman_switch({
+                "source": "risk_detection_ingest",
+                "camera_id": data["camera_id"],
+                "location": data.get("location", "Unknown"),
+                "risk_level": risk_level,
+                "labels": analysis_result.get("labels", []),
+                "matched_red": analysis_result.get("matched_red", []),
+                "matched_yellow": analysis_result.get("matched_yellow", []),
+                "analysis": analysis_result,
+                "storage_info": storage_result,
+            })
         
         return jsonify({
             "message": "Frame processed successfully",
             "analysis": analysis_result,
-            "storage_info": storage_result
+            "storage_info": storage_result,
+            "dead_man_switch": deadman_switch_result or {
+                "armed": False,
+                "status": "not_required_for_green",
+            }
         }), 200
         
     except Exception as e:

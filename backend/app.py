@@ -2,6 +2,8 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from core.firebase_config import initialize_firebase
 from features.risk_detection.routes import risk_bp
+from features.deadman_switch.routes import deadman_switch_bp
+from features.deadman_switch.service import start_deadman_switch_monitor
 
 def create_app():
     # Initialize Firebase 
@@ -12,6 +14,9 @@ def create_app():
     
     # Register API blueprints
     app.register_blueprint(risk_bp, url_prefix='/api/v1/risk-detection')
+    app.register_blueprint(deadman_switch_bp, url_prefix='/api/v1/deadman-switch')
+
+    start_deadman_switch_monitor()
 
     @app.route('/health', methods=['GET'])
     def health_check():
