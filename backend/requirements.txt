@@ -4,3 +4,4 @@ firebase-admin
 google-cloud-vision
 python-dotenv
 werkzeug
+opencv-python
