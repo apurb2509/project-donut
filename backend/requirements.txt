@@ -4,4 +4,4 @@ firebase-admin
 google-cloud-vision
 python-dotenv
 werkzeug
-google-api-python-client
+opencv-python

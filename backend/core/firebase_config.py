@@ -1,49 +1,64 @@
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
+from google.cloud import vision
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
+class FirebaseServices:
+    _instance = None
+    
+    def __init__(self):
+        self.db = None
+        self.bucket = None
+        self.vision_client = None
+        self._initialize()
 
-def _resolve_credentials_path(raw_path: str) -> str:
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    normalized = os.path.normpath(raw_path)
+    def _initialize(self):
+        cred_path = os.getenv('FIREBASE_CREDENTIALS_PATH', 'firebase-credentials.json')
+        bucket_name = os.getenv('FIREBASE_STORAGE_BUCKET')
+        
+        # Absolute path for credentials to ensure reliability
+        if not os.path.isabs(cred_path):
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cred_path = os.path.join(backend_dir, cred_path)
 
-    candidates = [
-        normalized,
-        os.path.join(backend_root, normalized),
-        os.path.join(backend_root, os.path.basename(normalized)),
-    ]
-
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-
-    return normalized
-
-def initialize_firebase():
-    if not firebase_admin._apps:
-        # Load the service account details from the environment variable path
-        cred_path = os.getenv('FIREBASE_CREDENTIALS_PATH')
-
-        resolved_cred_path = _resolve_credentials_path(cred_path) if cred_path else None
-
-        if resolved_cred_path and os.path.exists(resolved_cred_path):
-            cred = credentials.Certificate(resolved_cred_path)
-            # You will need to provide your default storage bucket name in the .env
-            bucket_name = os.getenv('FIREBASE_STORAGE_BUCKET')
-            firebase_admin.initialize_app(cred, {
-                'storageBucket': bucket_name
-            })
-            print("Firebase initialized successfully using credentials file.")
+        if os.path.exists(cred_path):
+            # Set environment variable for Google Cloud SDKs (Vision API)
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = cred_path
+            
+            cred = credentials.Certificate(cred_path)
+            if not firebase_admin._apps:
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': bucket_name
+                })
+            print(f"Firebase initialized successfully using: {cred_path}")
         else:
-            # Fallback to Application Default Credentials if running in GCP directly
-            firebase_admin.initialize_app()
+            if not firebase_admin._apps:
+                firebase_admin.initialize_app()
             print("Firebase initialized using Application Default Credentials.")
 
+        self.db = firestore.client()
+        self.bucket = storage.bucket()
+        self.vision_client = vision.ImageAnnotatorClient()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
 def get_firestore_client():
-    return firestore.client()
+    return FirebaseServices.get_instance().db
 
 def get_storage_bucket():
-    return storage.bucket()
+    return FirebaseServices.get_instance().bucket
+
+def get_vision_client():
+    return FirebaseServices.get_instance().vision_client
+
+def initialize_firebase():
+    """Compatibility function to trigger initialization"""
+    FirebaseServices.get_instance()
