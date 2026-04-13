@@ -23,6 +23,7 @@ backend/*.json
 *firebase-adminsdk*.json
 *service-account*.json
 credentials.json
+*.json
 
 # OS files
 .DS_Store

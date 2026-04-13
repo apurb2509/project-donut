@@ -9,6 +9,11 @@ from core.firebase_config import get_firestore_client
 
 OUTBOX_COLLECTION = "deadman_switch_outbox"
 
+# Local mock outbox for testing
+_MOCK_OUTBOX: Dict[str, Dict[str, Any]] = {}
+
+def is_mock_mode() -> bool:
+    return os.getenv("MOCK_FIRESTORE", "false").lower() == "true"
 
 def _parse_recipients(value):
     if not value:
@@ -56,13 +61,11 @@ def build_default_outreach_plan(incident: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def dispatch_outreach(incident: Dict[str, Any]) -> Dict[str, Any]:
-    db = get_firestore_client()
     plan = build_default_outreach_plan(incident)
     outbox_entries = []
 
     outbox_entries.append(
         _store_outbox_entry(
-            db=db,
             incident=incident,
             channel="venue_alarm",
             target="venue-wide alert",
@@ -74,9 +77,9 @@ def dispatch_outreach(incident: Dict[str, Any]) -> Dict[str, Any]:
 
     outbox_entries.extend(
         [
-            _dispatch_email_alert(db, incident, plan),
-            _dispatch_sms_alert(db, incident, plan),
-            _dispatch_call_alert(db, incident, plan),
+            _dispatch_email_alert(incident, plan),
+            _dispatch_sms_alert(incident, plan),
+            _dispatch_call_alert(incident, plan),
         ]
     )
 
@@ -96,7 +99,6 @@ def _build_alarm_message(incident: Dict[str, Any]) -> str:
 
 
 def _store_outbox_entry(
-    db,
     incident: Dict[str, Any],
     channel: str,
     target: str,
@@ -115,42 +117,51 @@ def _store_outbox_entry(
         "provider": provider,
         "created_at": datetime.utcnow(),
     }
-    db.collection(OUTBOX_COLLECTION).document(outbox_id).set(payload)
+    
+    if is_mock_mode():
+        _MOCK_OUTBOX[outbox_id] = payload
+    else:
+        db = get_firestore_client()
+        db.collection(OUTBOX_COLLECTION).document(outbox_id).set(payload)
+        
     return _serialize(payload)
 
 
-def _dispatch_email_alert(db, incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+def _dispatch_email_alert(incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
     recipients = plan["recipients"].get("emergency_contacts") or _parse_recipients(
         os.getenv("DEADMAN_SWITCH_EMAIL_RECIPIENTS")
     )
     subject = f"[ALERT] {incident.get('risk_level', 'UNKNOWN')} incident at {incident.get('location', 'Unknown location')}"
     message = _build_alarm_message(incident)
 
-    if recipients and _send_email_via_google_workspace(recipients, subject, message):
-        status = "sent"
+    if recipients:
+        if is_mock_mode():
+            status = "mock_sent"
+        elif _send_email_via_google_workspace(recipients, subject, message):
+            status = "sent"
+        else:
+            status = "queued"
     else:
-        status = "queued"
+        status = "unconfigured"
 
     return _store_outbox_entry(
-        db=db,
         incident=incident,
         channel="email",
         target=", ".join(recipients) if recipients else "unconfigured",
         message=message,
         status=status,
-        provider="google_workspace_gmail_api" if recipients else "firestore_queue",
+        provider="google_workspace_gmail_api" if recipients and not is_mock_mode() else "firestore_queue",
     )
 
 
-def _dispatch_sms_alert(db, incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+def _dispatch_sms_alert(incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
     recipients = plan["recipients"].get("emergency_contacts") or _parse_recipients(
         os.getenv("DEADMAN_SWITCH_SMS_RECIPIENTS")
     )
     message = _build_alarm_message(incident)
-    status = "queued" if recipients else "unconfigured"
+    status = ("mock_queued" if is_mock_mode() else "queued") if recipients else "unconfigured"
 
     return _store_outbox_entry(
-        db=db,
         incident=incident,
         channel="sms",
         target=", ".join(recipients) if recipients else "unconfigured",
@@ -160,15 +171,14 @@ def _dispatch_sms_alert(db, incident: Dict[str, Any], plan: Dict[str, Any]) -> D
     )
 
 
-def _dispatch_call_alert(db, incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+def _dispatch_call_alert(incident: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
     recipients = plan["recipients"].get("emergency_contacts") or _parse_recipients(
         os.getenv("DEADMAN_SWITCH_CALL_RECIPIENTS")
     )
     message = _build_alarm_message(incident)
-    status = "queued" if recipients else "unconfigured"
+    status = ("mock_queued" if is_mock_mode() else "queued") if recipients else "unconfigured"
 
     return _store_outbox_entry(
-        db=db,
         incident=incident,
         channel="call",
         target=", ".join(recipients) if recipients else "unconfigured",
@@ -216,6 +226,10 @@ def _send_email_via_google_workspace(recipients: List[str], subject: str, body: 
 
 
 def _send_firebase_topic_alert(incident: Dict[str, Any]) -> None:
+    if is_mock_mode():
+        print(f"[MOCK MODE] Simulating Firebase Topic Alert for topic: {os.getenv('DEADMAN_SWITCH_FCM_TOPIC', 'venue-wide-alerts')}")
+        return
+
     topic = os.getenv("DEADMAN_SWITCH_FCM_TOPIC", "venue-wide-alerts")
     message = messaging.Message(
         topic=topic,
